@@ -1,0 +1,55 @@
+# C++ build artifacts
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.a
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Node
+node_modules/
+android/
+.capacitor/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Logs & temp output
+*.log
+*.tmp
+*.txt
+!*.md
+
+# Temporary helper scripts
+backend_cpp/_*.py
+backend_cpp/check.py
+backend_cpp/test.py
+replace_auth.py
+test_reg.py
+test_reg2.py
+
+# Sensor data dumps
+backend_cpp/data/
+
+# Documents (not code)
+task_book.docx
