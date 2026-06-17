@@ -1,4 +1,4 @@
-﻿/* ============================================
+/* ============================================
    chart.js - ECharts 图表管理
    管理 3 个图表：历史曲线、病虫害仪表盘、能耗柱状图
    ============================================ */
@@ -46,20 +46,21 @@ const Charts = (() => {
   function updateHistory(data) {
     if (!historyChart) return;
 
-    const labels = data.data.map(d => {
-      const dt = new Date(d[0]);
-      return dt.getHours().toString().padStart(2, '0') + ':' + dt.getMinutes().toString().padStart(2, '0');
-    });
-    const values = data.data.map(d => d[1]);
-    const field = data.field;
-    const unit = API.FIELD_UNITS[field] || '';
-    const threshold = data.threshold;
+    var field = data.field;
+    var unit = API.FIELD_UNITS[field] || "";
+    var threshold = data.threshold;
 
-    const option = {
+    var option = {
       tooltip: {
-        trigger: 'axis',
+        trigger: "axis",
         confine: true,
-        textStyle: { fontSize: 12 }
+        textStyle: { fontSize: 12 },
+        formatter: function(params) {
+          var p = params[0];
+          var dt = new Date(p.data[0]);
+          var t = dt.getHours().toString().padStart(2,"0") + ":" + dt.getMinutes().toString().padStart(2,"0");
+          return t + "<br/>" + p.seriesName + ": " + p.data[1].toFixed(1) + " " + unit;
+        }
       },
       legend: {
         data: [API.FIELD_LABELS[field]],
@@ -67,55 +68,57 @@ const Charts = (() => {
         textStyle: { fontSize: 12 }
       },
       grid: {
-        left: 50, right: 20, top: 30, bottom: 30
+        left: 50, right: 20, top: 30, bottom: 45
       },
       xAxis: {
-        type: 'category',
-        boundaryGap: false,
-        data: labels,
+        type: "time",
         axisLabel: {
           fontSize: 10,
-          interval: 23 // 每小时显示一个标签
-        }
+          formatter: function(value) {
+            var dt = new Date(value);
+            return dt.getHours().toString().padStart(2,"0") + ":" + dt.getMinutes().toString().padStart(2,"0");
+          }
+        },
+        minInterval: 300000
       },
       yAxis: {
-        type: 'value',
+        type: "value",
         name: unit,
         nameTextStyle: { fontSize: 11 },
         axisLabel: { fontSize: 10 }
       },
       dataZoom: [{
-        type: 'inside',
-        start: 0,
+        type: "inside",
+        start: 75,
         end: 100
       }, {
-        type: 'slider',
-        start: 0,
+        type: "slider",
+        start: 75,
         end: 100,
         height: 20,
         bottom: 0,
-        handleSize: '80%',
+        handleSize: "80%",
         textStyle: { fontSize: 10 }
       }],
       series: [{
         name: API.FIELD_LABELS[field],
-        type: 'line',
-        data: values,
+        type: "line",
+        data: data.data,
         smooth: true,
-        lineStyle: { width: 2, color: '#4caf50' },
-        itemStyle: { color: '#4caf50' },
+        lineStyle: { width: 2, color: "#4caf50" },
+        itemStyle: { color: "#4caf50" },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(76,175,80,0.3)' },
-            { offset: 1, color: 'rgba(76,175,80,0.05)' }
+            { offset: 0, color: "rgba(76,175,80,0.3)" },
+            { offset: 1, color: "rgba(76,175,80,0.05)" }
           ])
         },
         markLine: threshold ? {
           silent: true,
-          symbol: 'none',
+          symbol: "none",
           data: [
-            { yAxis: threshold.min, lineStyle: { color: '#f57c00', type: 'dashed', width: 1.5 }, label: { show: false } },
-            { yAxis: threshold.max, lineStyle: { color: '#d32f2f', type: 'dashed', width: 1.5 }, label: { show: false } }
+            { yAxis: threshold.min, lineStyle: { color: "#f57c00", type: "dashed", width: 2 }, label: { show: true, position: "insideEndTop", formatter: "下限 {c}", color: "#f57c00", fontSize: 11 } },
+            { yAxis: threshold.max, lineStyle: { color: "#d32f2f", type: "dashed", width: 2 }, label: { show: true, position: "insideEndTop", formatter: "上限 {c}", color: "#d32f2f", fontSize: 11 } }
           ]
         } : undefined
       }]
@@ -123,7 +126,6 @@ const Charts = (() => {
 
     historyChart.setOption(option, true); historyChart.resize();
   }
-
   // ========== 病虫害仪表盘 ==========
   function updatePestGauge(risk, probability) {
     if (!pestGauge) return;
@@ -262,9 +264,9 @@ const Charts = (() => {
     loadHistory();
   }
 
-  async function loadHistory() {
+  async function loadHistory(reset) {
     try {
-      const data = await API.getSensorHistory(currentPoint, currentField);
+      const data = await API.getSensorHistory(currentPoint, currentField, reset);
       updateHistory(data);
     } catch (e) {
       console.error('[Chart] 历史数据加载失败:', e);

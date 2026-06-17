@@ -40,11 +40,13 @@ const API = (() => {
 
   return {
     getSensorCurrent: () => request('GET', '/api/sensor/current'),
-    getSensorHistory: (point, field) => request('GET', '/api/sensor/history?point=' + point + '&field=' + field),
+    getSensorHistory: (point, field, reset) => request('GET', '/api/sensor/history?point=' + point + '&field=' + field + (reset ? '&reset=1' : '')),
     getAlertStatus: () => request('GET', '/api/alert/status'),
     getPestPredict: () => request('GET', '/api/pest/predict'),
     getEnergyStatus: () => request('GET', '/api/energy/status'),
-    controlDevice: (point, device, action) => request('POST', '/api/device/control', { point, device, action }),
-    FIELD_LABELS, FIELD_UNITS, FIELD_THRESHOLDS, SENSOR_FIELDS
+        getAdvice: (point, device) => request('GET', '/api/sensor/advice?point=' + point + '&device=' + device),
+    shouldStop: (point, device) => request('GET', '/api/sensor/should_stop?point=' + point + '&device=' + device),
+    controlDevice: (point, device, action, dur, level) => request('POST', '/api/device/control', { point, device, action, dur, level }),
+    FIELD_LABELS, FIELD_UNITS, FIELD_THRESHOLDS, SENSOR_FIELDS, deviceStates
   };
 })();

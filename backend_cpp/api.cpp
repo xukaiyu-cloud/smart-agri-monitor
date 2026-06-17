@@ -42,22 +42,33 @@ string api_handle(const HttpRequest& req) {
     // ==========================================
     if (m == "GET" && p == "/api/sensor/history") {
         int pt = stoi(http_get_param(req, "point", "1"));
+        fprintf(stderr, "[HISTORY] full_path=%s\n", req.path.c_str());
+        for (auto& kv : req.params) fprintf(stderr, "[HISTORY] param: %s=%s\n", kv.first.c_str(), kv.second.c_str());
         string field = http_get_param(req, "field", "temp");
         stringstream ss; ss.precision(1); ss << fixed;
         ss << "{\"point\":" << pt << ",\"field\":\"" << field << "\",\"data\":[";
+        static time_t s_anchor = 0;
         time_t now = time(nullptr);
-        double bases[5][4] = {{22,62,18000,6.6},{24,58,22000,6.8},{26,55,28000,7.0},{23,65,15000,6.5},{27,50,32000,7.2}};
-        for (int i = 288; i >= 0; i--) {
-            time_t t = now - i * 300;
-            double hh = fmod((double)(i * 300) / 3600.0, 24.0);
-            double cy = sin((hh - 9) / 24 * 6.2831853);
-            double v;
-            if (field == "temp")       v = bases[pt-1][0] + cy * 7 + randf(-1, 1);
-            else if (field == "humidity") v = 65 - cy * 10 + randf(-3, 3);
-            else if (field == "light")    v = (hh > 5.5 && hh < 19) ? sin((hh - 5.5) / 13.5 * 3.14159) * bases[pt-1][2] : randi(0, 8);
-            else                       v = bases[pt-1][3] + sin(i / 57.0) * 0.12 + randf(-0.05, 0.05);
-            if (i < 288) ss << ",";
-            ss << "[" << (t * 1000LL) << "," << v << "]";
+        if (http_get_param(req, "reset", "") == "1") s_anchor = now;
+        time_t sim_now = s_anchor + (now - s_anchor) * 300;
+        fprintf(stderr, "[HISTORY] reset=%s now=%lld sim_now=%lld diff=%lld\n", http_get_param(req, "reset", "").c_str(), (long long)now, (long long)sim_now, (long long)(sim_now-now));
+        double raw[289];
+        time_t timestamps[289];
+        for (int i = 0; i <= 288; i++) {
+            time_t real_ts = now - (time_t)((288 - i) * 300.0 / 300.0);
+            auto sd = sim_sensor_at(pt, real_ts);
+            if (field == "temp")       raw[i] = sd.temp;
+            else if (field == "humidity") raw[i] = sd.humidity;
+            else if (field == "light")    raw[i] = (double)sd.light;
+            else                       raw[i] = sd.ph;
+            timestamps[i] = sim_now - (288 - i) * 300;
+        }
+        for (int i = 0; i <= 288; i++) {
+            double v = raw[i];
+            if (i > 0 && i < 288)
+                v = (raw[i-1] + raw[i] + raw[i+1]) / 3.0;
+            if (i > 0) ss << ",";
+            ss << "[" << (timestamps[i] * 1000LL) << "," << v << "]";
         }
         ss << "],\"threshold\":{";
         if (field == "temp") ss << "\"min\":15,\"max\":35";
@@ -69,74 +80,35 @@ string api_handle(const HttpRequest& req) {
     }
 
     // ==========================================
-    // 告警状态（新设计：持久化 + 防重复）
+    // ???????????????????
     // ==========================================
     if (m == "GET" && p == "/api/alert/status") {
-        // 1. 检测当前传感器是否触发告警
-        bool has_active[5][4] = {}; // [point][field] 是否仍有告警
-        for (int pt = 1; pt <= 5; pt++) {
-            auto s = sim_sensor(pt);
-            auto check = [&](string f, string l, double v, double th, string lv, bool cond, int fi) {
-                if (cond) {
-                    db_alert_upsert(pt, f, l, v, th, lv);
-                    has_active[pt-1][fi] = true;
-                }
-            };
-            check("temp",     "\u6e29\u5ea6\u8fc7\u9ad8", s.temp,     35,    "critical", s.temp > 35,      0);
-            check("temp",     "\u6e29\u5ea6\u8fc7\u4f4e", s.temp,     15,    "warning",  s.temp < 15,      0);
-            check("humidity", "\u6e7f\u5ea6\u8fc7\u9ad8", s.humidity, 85,    "warning",  s.humidity > 85,  1);
-            check("humidity", "\u6e7f\u5ea6\u8fc7\u4f4e", s.humidity, 30,    "warning",  s.humidity < 30,  1);
-            check("light",    "\u5149\u7167\u8fc7\u5f3a", (double)s.light, 80000, "warning", s.light > 80000, 2);
-            check("ph",       "pH\u503c\u504f\u9ad8",       s.ph,      8.0,   "warning",  s.ph > 8.0,       3);
-            check("ph",       "pH\u503c\u504f\u4f4e",       s.ph,      5.5,   "warning",  s.ph < 5.5,       3);
-        }
-
-        // 2. 将不再触发的 active 告警标记为 recovered
-        auto all = db_alert_list();
-        for (auto& r : all) {
-            if (r.status == "active") {
-                int fi = (r.field=="temp"?0:r.field=="humidity"?1:r.field=="light"?2:3);
-                if (!has_active[r.point_id-1][fi]) {
-                    // 该指标已恢复正常，标记 recovered
-                    // (通过 db_alert_ack 机制不太好，这里直接覆盖)
-                }
-            }
-        }
-
-        // 3. 返回当前告警列表
-        all = db_alert_list();
         stringstream ss; ss.precision(1); ss << fixed;
         ss << "{\"alerts\":[";
         bool first = true;
-        for (auto& r : all) {
-            if (!first) ss << ","; first = false;
-            ss << "{\"id\":" << r.id
-               << ",\"point\":" << r.point_id
-               << ",\"field\":\"" << r.field << "\""
-               << ",\"label\":\"" << r.label << "\""
-               << ",\"value\":" << r.value
-               << ",\"threshold\":" << r.threshold
-               << ",\"level\":\"" << r.level << "\""
-               << ",\"status\":\"" << r.status << "\""
-               << ",\"started_at\":\"" << r.started_at << "\""
-               << ",\"ended_at\":\"" << r.ended_at << "\""
-               << "}";
+        for (int pt = 1; pt <= 5; pt++) {
+            auto s = sim_sensor(pt);
+            auto emit = [&](const char* f, const char* l, double v, double th, const char* lv) {
+                if (!first) ss << ","; first = false;
+                ss << "{\"point\":" << pt
+                   << ",\"field\":\"" << f << "\""
+                   << ",\"label\":\"" << l << "\""
+                   << ",\"value\":" << v
+                   << ",\"threshold\":" << th
+                   << ",\"level\":\"" << lv << "\"}";
+            };
+            if (s.temp > 35)      emit("temp","温度过高", s.temp, 35, "critical");
+            if (s.temp < 15)      emit("temp","温度过低", s.temp, 15, "warning");
+            if (s.humidity > 85)  emit("humidity","湿度过高", s.humidity, 85, "warning");
+            if (s.humidity < 30)  emit("humidity","湿度过低", s.humidity, 30, "warning");
+            if (s.light > 80000)  emit("light","光照过强", (double)s.light, 80000, "warning");
+            if (s.ph > 8.0)       emit("ph","pH值偏高", s.ph, 8.0, "warning");
+            if (s.ph < 5.5)       emit("ph","pH值偏低", s.ph, 5.5, "warning");
         }
-        ss << "],\"time\":\"" << time(nullptr) << "\"}";
+        ss << "]}";
         return ss.str();
     }
 
-    // ==========================================
-    // 告警确认
-    // ==========================================
-    if (m == "POST" && p == "/api/alert/ack") {
-        string id_str = http_json_body(req.body, "id");
-        if (id_str.empty()) return "{\"error\":\"\u7f3a\u5c11\u544a\u8b66ID\"}";
-        int id = stoi(id_str);
-        if (db_alert_ack(id))
-            return "{\"success\":true}";
-        return "{\"error\":\"\u544a\u8b66\u4e0d\u5b58\u5728\"}";
-    }
 
     // ==========================================
     // 病虫害预测
@@ -178,6 +150,67 @@ string api_handle(const HttpRequest& req) {
            << "\"\u76d1\u6d4b\u70b91\u53ef\u51cf\u5c11\u591c\u95f4\u8865\u5149\u65f6\u957f\u3002\","
            << "\"\u76d1\u6d4b\u70b95\u901a\u98ce\u6548\u7387\u826f\u597d\u3002\"]}";
         return ss.str();
+    }
+
+        // ==========================================
+    // 灌溉/通风建议
+    // ==========================================
+    if (m == "GET" && p == "/api/sensor/advice") {
+        int pt = stoi(http_get_param(req, "point", "1"));
+        string device = http_get_param(req, "device", "water");
+        auto s = sim_sensor(pt);
+        stringstream ss; ss.precision(1); ss << fixed;
+        bool advisable = true;
+        string reason;
+        if (device == "water") {
+            if (s.humidity > 60) {
+                advisable = false;
+                ss << "当前湿度" << s.humidity << "%，土壤水分充足，不建议灌溉";
+                reason = ss.str();
+            }
+        } else if (device == "fan") {
+            if (s.temp < 30 && s.humidity < 70) {
+                advisable = false;
+                ss << "当前温度" << s.temp << "°C、湿度" << s.humidity << "%，环境良好，不建议通风";
+                reason = ss.str();
+            }
+        }
+        stringstream resp; resp.precision(1); resp << fixed;
+        resp << "{\"advisable\":" << (advisable ? "true" : "false")
+             << ",\"reason\":\"" << reason << "\""
+             << ",\"field\":\"" << (device == "water" ? "humidity" : "temp") << "\""
+             << ",\"current\":" << (device == "water" ? s.humidity : s.temp)
+             << ",\"threshold\":" << (device == "water" ? 60 : 30) << "}";
+        return resp.str();
+    }
+
+    // ==========================================
+    // 检查设备是否应该关闭
+    // ==========================================
+    if (m == "GET" && p == "/api/sensor/should_stop") {
+        int pt = stoi(http_get_param(req, "point", "1"));
+        string device = http_get_param(req, "device", "water");
+        auto s = sim_sensor(pt);
+        stringstream ss; ss.precision(1); ss << fixed;
+        bool should_stop = false;
+        string reason;
+        if (device == "water") {
+            should_stop = (s.humidity > 60);
+            if (should_stop) {
+                ss << "湿度已回升至" << s.humidity << "%，可停止灌溉";
+                reason = ss.str();
+            }
+        } else if (device == "fan") {
+            should_stop = (s.temp < 30 && s.humidity < 70);
+            if (should_stop) {
+                ss << "温度已降至" << s.temp << "°C，环境恢复正常，可停止通风";
+                reason = ss.str();
+            }
+        }
+        stringstream resp; resp.precision(1); resp << fixed;
+        resp << "{\"should_stop\":" << (should_stop ? "true" : "false")
+             << ",\"reason\":\"" << reason << "\"}";
+        return resp.str();
     }
 
     // ==========================================

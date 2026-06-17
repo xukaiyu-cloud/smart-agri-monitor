@@ -1,9 +1,9 @@
 /*
- * sensor.h - 传感器模拟层
- * 用途：模拟5个监测点的温湿度、光照、pH数据
+ * sensor.h - sensor simulation layer
  */
 
 #pragma once
+#include <ctime>
 
 struct SensorData {
     int id;
@@ -12,5 +12,9 @@ struct SensorData {
     double ph;
 };
 
-// 模拟单个监测点数据
 SensorData sim_sensor(int point_id);
+SensorData sim_sensor_at(int point_id, time_t timestamp);
+
+// Compute 288x accelerated timestamp from a single now value.
+// If reset==true, anchors the clock at now.
+time_t sim_anchor(time_t now, bool reset);

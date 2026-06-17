@@ -2,6 +2,10 @@
    app.js - 主应用逻辑 (精简版)
    ============================================ */
 
+let simAnchor = 0;
+function simNow() { return simAnchor + (Date.now() - simAnchor) * 300; }
+function fmtSimTime() { var d = new Date(simNow()); return d.getHours().toString().padStart(2,"0") + ":" + d.getMinutes().toString().padStart(2,"0") + ":" + d.getSeconds().toString().padStart(2,"0"); }
+
 const App = (() => {
   let sensorTimer, alertTimer, chartTimer, pestTimer, energyTimer;
   let isForeground = true;
@@ -9,10 +13,30 @@ const App = (() => {
   let retryDelay = 1000;
   const MAX_RETRY = 16000;
 
-  function updateClock() {
-    var n = new Date();
-    document.getElementById('clock').textContent =
-      n.getHours().toString().padStart(2,'0')+':'+n.getMinutes().toString().padStart(2,'0')+':'+n.getSeconds().toString().padStart(2,'0');
+  function updateAllTimes() {
+    var ts = fmtSimTime();
+    document.getElementById('clock').textContent = ts;
+    var st = document.getElementById('sensor-time');
+    if (st) {
+      var label = "\u66f4\u65b0\u4e8e " + ts;
+      var h = "<span class=\"vf-text\">";
+      for (var k = 0; k < label.length; k++) {
+        h += '<span class=\"vf-letter\" style=\"animation-delay:' + (k*0.03).toFixed(2) + 's\">' + label[k] + '</span>';
+      }
+      h += "</span>";
+      st.innerHTML = h;
+    }
+    var ct = document.getElementById("chart-header-time");
+    if (ct) {
+      var h2 = "<span class=\"vf-text\">\u23f0 ";
+      for (var jj = 0; jj < ts.length; jj++) {
+        h2 += '<span class=\"vf-letter\" style=\"animation-delay:' + (jj*0.03).toFixed(2) + 's\">' + ts[jj] + '</span>';
+      }
+      h2 += "</span>";
+      ct.innerHTML = h2;
+    }
+    var ct2 = document.getElementById("chart-sim-time");
+    if (ct2) ct2.textContent = "\u23f0 " + ts;
   }
 
   function showToast(msg, dur) {
@@ -31,11 +55,15 @@ const App = (() => {
   // ===== 传感器面板 =====
   function renderSensors(data) {
     var g = document.getElementById('sensor-grid'), h = '';
-    var t = document.getElementById('sensor-time');
     data.points.forEach(function(p){
       var w = (p.temp>35||p.temp<15||p.humidity>85||p.humidity<30||p.light>80000||p.ph>8||p.ph<5.5);
       h += '<div class="sensor-card'+(w?' warning':'')+'">';
-      h += '<div class="card-title">📍 '+p.name+'</div>';
+      var stHTML = "";
+      var ds = (API.deviceStates && API.deviceStates[p.id]) ? API.deviceStates[p.id] : null;
+      if (ds && ds.water) stHTML += '<span class="card-status rain">\uD83D\uDCA7</span>';
+      if (ds && ds.fan) stHTML += '<span class="card-status wind">\uD83D\uDCA8</span>';
+      if (stHTML) stHTML = '<div class="card-status-bar">' + stHTML + "</div>";
+      h += '<div class="card-title">\uD83D\uDCCD '+p.name+stHTML+'</div>';
       h += '<div class="sensor-row"><span class="sensor-label">🌡️ 温度</span><span class="sensor-value'+(p.temp>35||p.temp<15?' danger':'')+'">'+p.temp+'°C</span></div>';
       h += '<div class="sensor-row"><span class="sensor-label">💧 湿度</span><span class="sensor-value'+(p.humidity>85||p.humidity<30?' danger':'')+'">'+p.humidity+'%</span></div>';
       h += '<div class="sensor-row"><span class="sensor-label">☀️ 光照</span><span class="sensor-value'+(p.light>80000?' danger':'')+'">'+p.light+' lx</span></div>';
@@ -43,15 +71,13 @@ const App = (() => {
       h += '</div>';
     });
     g.innerHTML = h;
-    var nn = new Date();
-    t.textContent = '更新于 '+nn.getHours().toString().padStart(2,'0')+':'+nn.getMinutes().toString().padStart(2,'0')+':'+nn.getSeconds().toString().padStart(2,'0');
   }
 
   // ===== 告警面板 =====
   function renderAlerts(data) {
-    var l = document.getElementById('alert-list');
-    var c = document.getElementById('alert-count');
-    var b = document.getElementById('nav-alert-badge');
+    var l = document.getElementById("alert-list");
+    var c = document.getElementById("alert-count");
+    var b = document.getElementById("nav-alert-badge");
 
     if (!data.alerts || !data.alerts.length) {
       l.innerHTML = '<div class="alert-empty">✅ 当前无告警</div>';
@@ -59,57 +85,23 @@ const App = (() => {
       b.style.display = 'none'; alertUnread = 0; return;
     }
 
-    // 按状态分组
-    var groups = { active: [], acked: [], recovered: [] };
-    data.alerts.forEach(function(a) {
-      var s = a.status || 'active';
-      (groups[s] = groups[s] || []).push(a);
-    });
-
     var icons = {temp:'🌡️', humidity:'💧', light:'☀️', ph:'🧪'};
-    var groupLabels = { active: '🔴 紧急', acked: '🟡 已确认', recovered: '⚪ 已恢复' };
-    var groupClass = { active: 'alert-group-critical', acked: 'alert-group-warn', recovered: 'alert-group-ok' };
     var html = '';
-
-    ['active', 'acked', 'recovered'].forEach(function(status) {
-      var items = groups[status] || [];
-      if (!items.length) return;
-      var collapsed = status !== 'active';
-      html += '<div class="alert-group ' + (groupClass[status]||'') + '">';
-      html += '<div class="alert-group-header" onclick="this.parentElement.classList.toggle(&quot;collapsed&quot;)">';
-      html += '<span>' + groupLabels[status] + ' (' + items.length + ')</span>';
-      html += '<span class="group-arrow">' + (collapsed ? '▶' : '▼') + '</span>';
+    data.alerts.forEach(function(a){
+      html += '<div class="alert-item' + (a.level==='critical'?' critical':'') + '">';
+      html += '<span class="alert-icon">' + (icons[a.field]||'⚠️') + '</span>';
+      html += '<div class="alert-body">';
+      html += '<div class="alert-text">监测点' + a.point + ' - ' + a.label + '：' + a.value + '（阈值：' + a.threshold + '）</div>';
       html += '</div>';
-      html += '<div class="alert-group-body">';
-      items.forEach(function(a){
-        html += '<div class="alert-item' + (a.level==='critical'?' critical':'') + '">';
-        html += '<span class="alert-icon">' + (icons[a.field]||'⚠️') + '</span>';
-        html += '<div class="alert-body">';
-        html += '<div class="alert-text">监测点' + a.point + ' - ' + a.label + '：' + a.value + '（阈值：' + a.threshold + '）</div>';
-        html += '<div class="alert-meta">开始于 ' + (a.started_at||'--') + '</div>';
-        html += '</div>';
-        if (status === 'active') {
-          html += '<button class="alert-ack-btn" onclick="App.ackAlert(' + a.id + ',this)" title="确认告警">✔</button>';
-        }
-        html += '</div>';
-      });
-      html += '</div></div>';
+      html += '</div>';
     });
 
     l.innerHTML = html;
 
-    // 折叠非 active 组
-    if (!groups.active || !groups.active.length) {
-      var firstGroup = l.querySelector('.alert-group');
-      if (firstGroup) firstGroup.classList.remove('collapsed');
-    }
-
-    // 更新角标
-    var cnt = (groups.active||[]).length;
+    var cnt = data.alerts.length;
     c.textContent = cnt; c.style.display = cnt > 0 ? 'flex' : 'none';
     b.textContent = cnt; b.style.display = cnt > 0 ? 'flex' : 'none';
 
-    // 新告警通知
     if (cnt > alertUnread && cnt > 0) {
       Native.vibrate('heavy');
       Native.notify('🚨 告警', cnt + '条新告警');
@@ -146,21 +138,136 @@ const App = (() => {
     g.innerHTML = h;
   }
 
-  // ===== 设备控制 =====
-  function handleToggle(cb) {
-    var point = parseInt(cb.dataset.point), device = cb.dataset.device, action = cb.checked?'on':'off';
-    var name = device==='water'?'灌溉':'通风';
-    API.controlDevice(point, device, action).then(function(r){
-      if (r.success) { Native.vibrate('light'); showToast('✅ 监测点'+point+' '+name+(action==='on'?'已开启':'已关闭')); }
-      else throw new Error('fail');
+  // ===== è®¾å¤æ§å¶å¼¹æ¡ =====
+  var modalCtx = { point: 0, device: '', cb: null, dur: 60, level: 'mid' };
+  var lastSensorData = null;
+  var activeDevices = {}; // { '1_water': Date.now() }
+
+  function showDeviceModal(cb) {
+    var point = parseInt(cb.dataset.point), device = cb.dataset.device;
+    modalCtx.point = point; modalCtx.device = device; modalCtx.cb = cb;
+    modalCtx.dur = 60;
+    var isWater = device === 'water';
+    document.getElementById('modal-icon').textContent = isWater ? '💧' : '🌀';
+    document.getElementById('modal-title').textContent = '监测点 ' + point + ' - ' + (isWater ? '灌溉控制' : '通风控制');
+    // Check advice first
+    document.getElementById('modal-warning').style.display = 'none';
+    document.getElementById('modal-duration').style.display = 'none';
+    document.getElementById('modal-intensity').style.display = 'none';
+    document.getElementById('modal-confirm').textContent = '确认开启';
+    document.getElementById('modal-cancel').textContent = '取消';
+    document.getElementById('modal-confirm').onclick = confirmDevice;
+    document.getElementById('device-modal-overlay').style.display = 'flex';
+    API.getAdvice(point, device).then(function(adv){
+      if (!adv.advisable) {
+        // Show warning
+        document.getElementById('modal-warning-msg').textContent = adv.reason;
+        document.getElementById('modal-warning').style.display = '';
+        document.getElementById('modal-duration').style.display = 'none';
+        document.getElementById('modal-intensity').style.display = 'none';
+        document.getElementById('modal-cancel').textContent = '听从建议取消';
+        document.getElementById('modal-confirm').textContent = '继续开启';
+        document.getElementById('modal-confirm').onclick = function(){
+          // Hide warning, show controls
+          document.getElementById('modal-warning').style.display = 'none';
+          document.getElementById('modal-duration').style.display = '';
+          document.getElementById('modal-intensity').style.display = '';
+          document.getElementById('modal-cancel').textContent = '取消';
+          document.getElementById('modal-confirm').textContent = '确认开启';
+          document.getElementById('modal-confirm').onclick = confirmDevice;
+          setupModalControls();
+        };
+      } else {
+        // No warning, show controls directly
+        document.getElementById('modal-warning').style.display = 'none';
+        document.getElementById('modal-duration').style.display = '';
+        document.getElementById('modal-intensity').style.display = '';
+        setupModalControls();
+      }
     }).catch(function(){
-      cb.checked = !cb.checked; showToast('❌ 控制失败');
+      document.getElementById('modal-duration').style.display = '';
+      document.getElementById('modal-intensity').style.display = '';
+      setupModalControls();
     });
   }
 
-  // ===== 数据加载 =====
+  function setupModalControls() {
+    var chips = document.querySelectorAll('.duration-chip');
+    chips.forEach(function(c){ c.classList.remove('active'); });
+    if (chips.length >= 2) chips[1].classList.add('active');
+    var iChips = document.querySelectorAll('.intensity-chip');
+    modalCtx.level = 'mid';
+    iChips.forEach(function(c){ c.classList.remove('active'); });
+    if (iChips.length >= 2) iChips[1].classList.add('active');
+    document.getElementById('custom-dur-input').value = '';
+  }
+
+  function closeDeviceModal() {
+    document.getElementById('device-modal-overlay').style.display = 'none';
+    modalCtx.cb = null;
+  }
+
+  function confirmDevice() {
+    if (!modalCtx.cb) return;
+    var cb = modalCtx.cb;
+    var point = modalCtx.point, device = modalCtx.device;
+    cb.checked = true;
+    API.deviceStates[point][device] = true;
+    var name = device==='water'?'灌溉':'通风';
+    var dur = modalCtx.dur, level = modalCtx.level;
+    var customVal = parseInt(document.getElementById('custom-dur-input').value);
+    if (customVal > 0) dur = customVal;
+    var key = point + '_' + device;
+    activeDevices[key] = { startTime: Date.now(), dur: dur, checkedTime: simNow() };
+    API.controlDevice(point, device, 'on', dur, level).then(function(r){
+      if (r.success) {
+        Native.vibrate('light');
+        showToast('✅ 监测点'+point+' '+name+'已开启 ('+dur+'分钟)');
+      } else throw new Error('fail');
+    }).catch(function(){
+      cb.checked = false; API.deviceStates[point][device] = false;
+      delete activeDevices[key];
+      showToast('❌ 控制失败');
+    });
+    closeDeviceModal();
+  }
+
   function loadSensor() {
-    API.getSensorCurrent().then(function(d){ renderSensors(d); updateConn(true); retryDelay=1000; }).catch(function(){ updateConn(false); retryDelay=Math.min(retryDelay*2,MAX_RETRY); });
+    API.getSensorCurrent().then(function(d){
+      lastSensorData = d;
+      renderSensors(d); updateConn(true); retryDelay=1000;
+      checkStopConditions(d);
+    }).catch(function(){ updateConn(false); retryDelay=Math.min(retryDelay*2,MAX_RETRY); });
+  }
+
+  function checkStopConditions(data) {
+    var now = simNow();
+    var keys = Object.keys(activeDevices);
+    keys.forEach(function(key){
+      var info = activeDevices[key];
+      var elapsed = (now - info.checkedTime) / 60000; // virtual minutes
+      if (elapsed < 20) return;
+      var parts = key.split('_');
+      var pt = parseInt(parts[0]), dev = parts[1];
+      var s = null;
+      data.points.forEach(function(p){ if (p.id === pt) s = p; });
+      if (!s) return;
+      var shouldStop = false, reason = '';
+      if (dev === 'water' && s.humidity > 60) {
+        shouldStop = true;
+        reason = '监测点'+pt+' 湿度已回升至'+s.humidity+'%，建议关闭灌溉';
+      } else if (dev === 'fan' && s.temp < 30 && s.humidity < 70) {
+        shouldStop = true;
+        reason = '监测点'+pt+' 温度已降至'+s.temp+'°C，环境恢复正常，建议关闭通风';
+      }
+      if (shouldStop) {
+        showToast('💡 ' + reason);
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('智慧农业 · 建议关闭设备', { body: reason });
+        }
+        delete activeDevices[key];
+      }
+    });
   }
   function loadAlert() { API.getAlertStatus().then(renderAlerts).catch(function(){}); }
   function loadPest() { API.getPestPredict().then(renderPest).catch(function(){}); }
@@ -171,7 +278,7 @@ const App = (() => {
     sensorTimer = setInterval(loadSensor, 3000);
     alertTimer = setInterval(loadAlert, 5000);
     pestTimer = setInterval(loadPest, 10000);
-    chartTimer = setInterval(function(){ Charts.loadHistory(); }, 30000);
+    chartTimer = setInterval(function(){ Charts.loadHistory(); }, 3000);
     energyTimer = setInterval(loadEnergy, 30000);
   }
 
@@ -201,7 +308,7 @@ const App = (() => {
   function start() {
     initDevices();
     console.log('[App] Starting...');
-    updateClock(); setInterval(updateClock, 1000);
+    updateAllTimes(); setInterval(updateAllTimes, 1000);
 
     // 初始化图表
     Charts.init();
@@ -218,7 +325,17 @@ const App = (() => {
     document.querySelectorAll('.nav-item').forEach(function(item){
       item.onclick = function(e){ e.preventDefault(); document.getElementById(this.dataset.target).scrollIntoView({behavior:'smooth'}); };
     });
-    document.getElementById('device-grid').onchange = function(e){ if(e.target.type==='checkbox') handleToggle(e.target); };
+    document.getElementById("device-grid").addEventListener("change", function(e){ if(e.target.type==="checkbox"){ if(e.target.checked){ e.target.checked = false; showDeviceModal(e.target); } else { var p=parseInt(e.target.dataset.point), d=e.target.dataset.device, n=d==="water"?"灌溉":"通风"; API.deviceStates[p][d]=false; API.controlDevice(p,d,"off").then(function(r){ if(r.success){Native.vibrate("light");showToast("✅ 监测点"+p+" "+n+"已关闭");} }).catch(function(){ e.target.checked=true; API.deviceStates[p][d]=true; showToast("❌ 控制失败"); }); } } });
+    // å¼¹æ¡äºä»¶
+    var durChips = document.querySelectorAll('.duration-chip');
+    durChips.forEach(function(c){ c.onclick = function(){ durChips.forEach(function(x){ x.classList.remove('active'); }); c.classList.add('active'); modalCtx.dur = parseInt(c.dataset.dur); }; });
+    var iChips2 = document.querySelectorAll('.intensity-chip');
+    iChips2.forEach(function(c){ c.onclick = function(){ iChips2.forEach(function(x){ x.classList.remove('active'); }); c.classList.add('active'); modalCtx.level = c.dataset.level; }; });
+    var customInput = document.getElementById('custom-dur-input');
+    customInput.oninput = function(){ var v = parseInt(this.value); if (v > 0) { document.querySelectorAll('.duration-chip').forEach(function(c){ c.classList.remove('active'); }); modalCtx.dur = v; } else { modalCtx.dur = parseInt(document.querySelector('.duration-chip.active').dataset.dur) || 60; } };
+    document.getElementById('modal-cancel').onclick = closeDeviceModal;
+    document.getElementById('modal-confirm').onclick = confirmDevice;
+    document.getElementById('device-modal-overlay').onclick = function(e){ if(e.target===this) closeDeviceModal(); };
     window.addEventListener('scroll', function(){
       window._st = window._st || 0;
       if(Date.now()-window._st>100){ updateNavScroll(); window._st=Date.now(); }
@@ -231,8 +348,10 @@ const App = (() => {
       if(a){ startPolling(); } else { stopPolling(); }
     });
 
-    // 加载数据
-    Promise.all([loadSensor(), loadAlert(), loadPest(), loadEnergy(), Charts.loadHistory()]).then(function(){
+
+    // 每次 reset=1 重置锚点
+    simAnchor = Date.now();
+    Promise.all([loadSensor(), loadAlert(), loadPest(), loadEnergy(), Charts.loadHistory(true)]).then(function(){
       startPolling();
       console.log('[App] Ready');
     });
