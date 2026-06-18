@@ -53,3 +53,13 @@ backend_cpp/data/
 
 # Documents (not code)
 task_book.docx
+# SSH keys (use system .ssh instead)
+id_*
+
+# Temp fix scripts
+_fix.py
+_t.py
+
+# MCP / external tools
+.mcp-github/
+.npm-cache/
