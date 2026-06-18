@@ -3,7 +3,7 @@
    ============================================ */
 
 const API = (() => {
-  const BASE_URL = 'http://'+window.location.hostname+':8080';
+  const BASE_URL = 'http://10.34.49.31:8080';
 
   const SENSOR_FIELDS = ['temp', 'humidity', 'light', 'ph'];
   const FIELD_LABELS = { temp: '温度', humidity: '湿度', light: '光照', ph: 'pH值' };
@@ -46,6 +46,7 @@ const API = (() => {
     getEnergyStatus: () => request('GET', '/api/energy/status'),
         getAdvice: (point, device) => request('GET', '/api/sensor/advice?point=' + point + '&device=' + device),
     shouldStop: (point, device) => request('GET', '/api/sensor/should_stop?point=' + point + '&device=' + device),
+    BASE_URL,
     controlDevice: (point, device, action, dur, level) => request('POST', '/api/device/control', { point, device, action, dur, level }),
     FIELD_LABELS, FIELD_UNITS, FIELD_THRESHOLDS, SENSOR_FIELDS, deviceStates
   };

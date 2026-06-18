@@ -2,13 +2,17 @@
 #include "db.h"
 #include "sensor.h"
 #include "pest.h"
+#include "analyze.h"
+#include "alert_queue.h"
 #include "json.h"
 #include <cmath>
 #include <sstream>
 #include <ctime>
 using namespace std;
 
-static int randi(int a, int b) { return a + rand() % (b-a+1); }
+// 全局告警队列（单链表FIFO，最大100条）
+static AlertQueue* g_alert_queue = nullptr;
+
 static double randf(double a, double b) { return a + (double)rand()/RAND_MAX * (b-a); }
 
 string api_handle(const HttpRequest& req) {
@@ -37,7 +41,6 @@ string api_handle(const HttpRequest& req) {
     }
 
     // ==========================================
-    // ==========================================
     // 历史曲线
     // ==========================================
     if (m == "GET" && p == "/api/sensor/history") {
@@ -47,21 +50,22 @@ string api_handle(const HttpRequest& req) {
         string field = http_get_param(req, "field", "temp");
         stringstream ss; ss.precision(1); ss << fixed;
         ss << "{\"point\":" << pt << ",\"field\":\"" << field << "\",\"data\":[";
-        static time_t s_anchor = 0;
         time_t now = time(nullptr);
-        if (http_get_param(req, "reset", "") == "1") s_anchor = now;
-        time_t sim_now = s_anchor + (now - s_anchor) * 300;
+        time_t sim_now = sim_anchor(now, http_get_param(req, "reset", "") == "1");
         fprintf(stderr, "[HISTORY] reset=%s now=%lld sim_now=%lld diff=%lld\n", http_get_param(req, "reset", "").c_str(), (long long)now, (long long)sim_now, (long long)(sim_now-now));
         double raw[289];
         time_t timestamps[289];
-        for (int i = 0; i <= 288; i++) {
-            time_t real_ts = now - (time_t)((288 - i) * 300.0 / 300.0);
-            auto sd = sim_sensor_at(pt, real_ts);
+                for (int i = 0; i <= 288; i++) {
+            time_t sim_ts = sim_now - (time_t)((288 - i) * 300);
+            time_t ts = (time_t)sim_ts;
+            struct tm* lt = localtime(&ts);
+            double vhour = lt->tm_hour + lt->tm_min / 60.0 + lt->tm_sec / 3600.0;
+            auto sd = sim_sensor_at_hour(pt, vhour);
             if (field == "temp")       raw[i] = sd.temp;
             else if (field == "humidity") raw[i] = sd.humidity;
             else if (field == "light")    raw[i] = (double)sd.light;
             else                       raw[i] = sd.ph;
-            timestamps[i] = sim_now - (288 - i) * 300;
+            timestamps[i] = sim_ts;
         }
         for (int i = 0; i <= 288; i++) {
             double v = raw[i];
@@ -80,7 +84,7 @@ string api_handle(const HttpRequest& req) {
     }
 
     // ==========================================
-    // ???????????????????
+    // 告警实时状态接口
     // ==========================================
     if (m == "GET" && p == "/api/alert/status") {
         stringstream ss; ss.precision(1); ss << fixed;
@@ -97,13 +101,22 @@ string api_handle(const HttpRequest& req) {
                    << ",\"threshold\":" << th
                    << ",\"level\":\"" << lv << "\"}";
             };
-            if (s.temp > 35)      emit("temp","温度过高", s.temp, 35, "critical");
-            if (s.temp < 15)      emit("temp","温度过低", s.temp, 15, "warning");
-            if (s.humidity > 85)  emit("humidity","湿度过高", s.humidity, 85, "warning");
-            if (s.humidity < 30)  emit("humidity","湿度过低", s.humidity, 30, "warning");
-            if (s.light > 80000)  emit("light","光照过强", (double)s.light, 80000, "warning");
-            if (s.ph > 8.0)       emit("ph","pH值偏高", s.ph, 8.0, "warning");
-            if (s.ph < 5.5)       emit("ph","pH值偏低", s.ph, 5.5, "warning");
+            if (s.temp > 35)      { emit("temp","温度过高", s.temp, 35, "critical");
+                if (!g_alert_queue) g_alert_queue = aq_create(100);
+                aq_enqueue(g_alert_queue, pt, "temp", "温度过高", s.temp, 35, "critical"); }
+            if (s.temp < 15)      { emit("temp","温度过低", s.temp, 15, "warning");
+                if (!g_alert_queue) g_alert_queue = aq_create(100);
+                aq_enqueue(g_alert_queue, pt, "temp", "温度过低", s.temp, 15, "warning"); }
+            if (s.humidity > 85)  { emit("humidity","湿度过高", s.humidity, 85, "warning");
+                aq_enqueue(g_alert_queue, pt, "humidity", "湿度过高", s.humidity, 85, "warning"); }
+            if (s.humidity < 30)  { emit("humidity","湿度过低", s.humidity, 30, "warning");
+                aq_enqueue(g_alert_queue, pt, "humidity", "湿度过低", s.humidity, 30, "warning"); }
+            if (s.light > 80000)  { emit("light","光照过强", (double)s.light, 80000, "warning");
+                aq_enqueue(g_alert_queue, pt, "light", "光照过强", (double)s.light, 80000, "warning"); }
+            if (s.ph > 8.0)       { emit("ph","pH值偏高", s.ph, 8.0, "warning");
+                aq_enqueue(g_alert_queue, pt, "ph", "pH值偏高", s.ph, 8.0, "warning"); }
+            if (s.ph < 5.5)       { emit("ph","pH值偏低", s.ph, 5.5, "warning");
+                aq_enqueue(g_alert_queue, pt, "ph", "pH值偏低", s.ph, 5.5, "warning"); }
         }
         ss << "]}";
         return ss.str();
@@ -128,6 +141,59 @@ string api_handle(const HttpRequest& req) {
     }
 
     // ==========================================
+    // 告警队列查看（链表遍历）
+    // ==========================================
+    if (m == "GET" && p == "/api/alert/queue") {
+        if (!g_alert_queue) g_alert_queue = aq_create(100);
+        stringstream ss; ss.precision(1); ss << fixed;
+        ss << "{\"queue\":[";
+        int count = 0;
+        AlertNode** arr = aq_get_all(g_alert_queue, &count);
+        if (arr) {
+            for (int i = 0; i < count; i++) {
+                if (i > 0) ss << ",";
+                ss << "{\"point\":" << arr[i]->point_id
+                   << ",\"field\":\"" << arr[i]->field << "\""
+                   << ",\"label\":\"" << arr[i]->label << "\""
+                   << ",\"value\":" << arr[i]->value
+                   << ",\"threshold\":" << arr[i]->threshold
+                   << ",\"level\":\"" << arr[i]->level << "\""
+                   << ",\"timestamp\":" << arr[i]->timestamp << "}";
+            }
+            free(arr);
+        }
+        ss << "],\"size\":" << aq_size(g_alert_queue) << "}";
+        return ss.str();
+    }
+
+    // ==========================================
+    // 传感器统计分析（快速排序 + EMA）
+    // ==========================================
+    if (m == "GET" && p == "/api/sensor/stats") {
+        int pt = stoi(http_get_param(req, "point", "1"));
+        SensorStats* s = compute_sensor_stats(pt);
+        stringstream ss; ss.precision(1); ss << fixed;
+        if (s) {
+            ss << "{\"point\":" << s->point_id
+               << ",\"count\":" << s->count
+               << ",\"min\":" << s->min
+               << ",\"max\":" << s->max
+               << ",\"median\":" << s->median
+               << ",\"mean\":" << s->mean
+               << ",\"stddev\":" << s->stddev
+               << ",\"q1\":" << s->q1
+               << ",\"q3\":" << s->q3
+               << ",\"ema\":" << s->ema
+               << ",\"threshold_35\":" << s->threshold_35
+               << ",\"above_threshold\":" << s->above_threshold << "}";
+            free_stats(s);
+        } else {
+            ss << "{\"error\":\"stat_failed\"}";
+        }
+        return ss.str();
+    }
+
+    // ==========================================
     // 能耗数据
     // ==========================================
     if (m == "GET" && p == "/api/energy/status") {
@@ -135,7 +201,7 @@ string api_handle(const HttpRequest& req) {
         ss << "{\"points\":[";
         double total = 0;
         for (int i = 1; i <= 5; i++) {
-            double w = randf(80, 200), f = randf(40, 130), l = randf(20, 70);
+            double w = randf(80, 200), f = randf(40, 130), l = 0;
             total += w + f + l;
             if (i > 1) ss << ",";
             ss << "{\"id\":" << i

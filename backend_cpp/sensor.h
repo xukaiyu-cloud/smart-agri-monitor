@@ -14,6 +14,8 @@ struct SensorData {
 
 SensorData sim_sensor(int point_id);
 SensorData sim_sensor_at(int point_id, time_t timestamp);
+SensorData sim_sensor_at_hour(int point_id, double virtual_hour);
+double sim_hour_now();
 
 // Compute 288x accelerated timestamp from a single now value.
 // If reset==true, anchors the clock at now.

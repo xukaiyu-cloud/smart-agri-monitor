@@ -70,6 +70,9 @@ const Charts = (() => {
       grid: {
         left: 50, right: 20, top: 30, bottom: 45
       },
+      animation: true,
+      animationDuration: 800,
+      animationEasing: "linear",
       xAxis: {
         type: "time",
         axisLabel: {
@@ -79,7 +82,9 @@ const Charts = (() => {
             return dt.getHours().toString().padStart(2,"0") + ":" + dt.getMinutes().toString().padStart(2,"0");
           }
         },
-        minInterval: 300000
+        minInterval: 300000,
+        min: "dataMin",
+        max: "dataMax"
       },
       yAxis: {
         type: "value",
@@ -124,7 +129,7 @@ const Charts = (() => {
       }]
     };
 
-    historyChart.setOption(option, true); historyChart.resize();
+    historyChart.setOption(option, false);
   }
   // ========== 病虫害仪表盘 ==========
   function updatePestGauge(risk, probability) {
@@ -203,7 +208,6 @@ const Charts = (() => {
     const points = data.points.map(p => '监测点 ' + p.id);
     const waterData = data.points.map(p => p.water);
     const fanData = data.points.map(p => p.fan);
-    const lightingData = data.points.map(p => p.lighting);
 
     const option = {
       tooltip: {
@@ -212,7 +216,7 @@ const Charts = (() => {
         confine: true
       },
       legend: {
-        data: ['灌溉', '通风', '照明'],
+        data: ['灌溉', '通风'],
         top: 0,
         textStyle: { fontSize: 11 }
       },
@@ -244,13 +248,7 @@ const Charts = (() => {
           itemStyle: { color: '#4caf50', borderRadius: [4, 4, 0, 0] },
           barMaxWidth: 24
         },
-        {
-          name: '照明',
-          type: 'bar',
-          data: lightingData,
-          itemStyle: { color: '#ff9800', borderRadius: [4, 4, 0, 0] },
-          barMaxWidth: 24
-        }
+  
       ]
     };
 

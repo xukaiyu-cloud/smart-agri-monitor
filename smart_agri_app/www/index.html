@@ -47,19 +47,6 @@
         <a href="#" id="switch-link" class="auth-link">立即注册</a>
       </p>
     </div>
-
-    <!-- 底部用户数 -->
-    <div class="auth-footer">
-      <p class="auth-footer-text">
-        已有 <span id="auth-user-count">326</span> 位农户正在使用
-      </p>
-      <div class="auth-avatars">
-        <div class="auth-avatar" style="background:#4caf50">👨‍🌾</div>
-        <div class="auth-avatar" style="background:#2196f3">👩‍🌾</div>
-        <div class="auth-avatar" style="background:#ff9800">👨‍🌾</div>
-        <div class="auth-avatar" style="background:#9c27b0">👩‍🌾</div>
-      </div>
-    </div>
   </div>
 
   <div id="app" style="display:none">
@@ -74,6 +61,15 @@
         <span id="clock" class="clock">--:--:--</span>
         <span id="conn-status" class="conn-dot" title="连接状态"></span>
         <button id="btn-refresh" class="icon-btn" title="刷新">刷新</button>
+        <div id="fluid-menu" class="fluid-menu">
+          <div id="fm-toggle" class="fm-toggle">
+            <span class="fm-icon fm-icon-menu">☰</span>
+            <span class="fm-icon fm-icon-close">✕</span>
+          </div>
+          <a href="#mail" class="fm-item" title="邮箱">📧</a>
+          <a href="#user" class="fm-item" title="用户">👤</a>
+          <a href="#settings" class="fm-item" title="设置">⚙️</a>
+        </div>
       </div>
     </header>
 
@@ -153,7 +149,7 @@
     <!-- ========== ⑥ 能耗面板 ========== -->
     <section id="energy-panel" class="module">
       <div class="module-header">
-        <h2>⚡ 能耗优化</h2>
+        <h2>⚡ 能耗显示</h2>
       </div>
       <div id="energy-total" class="energy-total">
         <span class="energy-num" id="energy-total-val">0</span>

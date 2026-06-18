@@ -245,7 +245,7 @@ const App = (() => {
     var keys = Object.keys(activeDevices);
     keys.forEach(function(key){
       var info = activeDevices[key];
-      var elapsed = (now - info.checkedTime) / 60000; // virtual minutes
+      var elapsed = (now - info.checkedTime) / 60000;
       if (elapsed < 20) return;
       var parts = key.split('_');
       var pt = parseInt(parts[0]), dev = parts[1];
@@ -261,13 +261,37 @@ const App = (() => {
         reason = '监测点'+pt+' 温度已降至'+s.temp+'°C，环境恢复正常，建议关闭通风';
       }
       if (shouldStop) {
-        showToast('💡 ' + reason);
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification('智慧农业 · 建议关闭设备', { body: reason });
-        }
-        delete activeDevices[key];
+        showStopModal(pt, dev, key, reason);
       }
     });
+  }
+
+  function showStopModal(pt, dev, key, reason) {
+    var isWater = dev === 'water';
+    document.getElementById('modal-icon').textContent = isWater ? '💧' : '🌀';
+    document.getElementById('modal-title').textContent = '监测点 ' + pt + ' - 建议关闭';
+    document.getElementById('modal-warning').style.display = '';
+    document.getElementById('modal-warning-msg').textContent = reason;
+    document.getElementById('modal-duration').style.display = 'none';
+    document.getElementById('modal-intensity').style.display = 'none';
+    document.getElementById('modal-cancel').textContent = '保持开启';
+    document.getElementById('modal-confirm').textContent = '立即关闭';
+    document.getElementById('modal-cancel').onclick = function(){
+      activeDevices[key].checkedTime = simNow();
+      closeDeviceModal();
+    };
+    document.getElementById('modal-confirm').onclick = function(){
+      var cb = document.querySelector('input[data-point="'+pt+'"][data-device="'+dev+'"]');
+      if (cb) { cb.checked = false; API.deviceStates[pt][dev] = false; }
+      delete activeDevices[key];
+      var name = isWater ? '灌溉' : '通风';
+      API.controlDevice(pt, dev, 'off').then(function(){ showToast('✅ 监测点'+pt+' '+name+'已关闭'); }).catch(function(){});
+      closeDeviceModal();
+    };
+    document.getElementById('device-modal-overlay').style.display = 'flex';
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('智慧农业 · 建议关闭设备', { body: reason });
+    }
   }
   function loadAlert() { API.getAlertStatus().then(renderAlerts).catch(function(){}); }
   function loadPest() { API.getPestPredict().then(renderPest).catch(function(){}); }
@@ -278,7 +302,7 @@ const App = (() => {
     sensorTimer = setInterval(loadSensor, 3000);
     alertTimer = setInterval(loadAlert, 5000);
     pestTimer = setInterval(loadPest, 10000);
-    chartTimer = setInterval(function(){ Charts.loadHistory(); }, 3000);
+    chartTimer = setInterval(function(){ Charts.loadHistory(); }, 1000);
     energyTimer = setInterval(loadEnergy, 30000);
   }
 
@@ -315,6 +339,10 @@ const App = (() => {
 
     // 绑定事件
     document.getElementById('btn-refresh').onclick = function(){ Native.vibrate('light'); refreshAll(); };
+    // 流式菜单
+    document.getElementById('fm-toggle').onclick = function(e){ e.stopPropagation(); document.getElementById('fluid-menu').classList.toggle('expanded'); };
+    document.querySelectorAll('.fm-item').forEach(function(item){ item.onclick = function(){ document.getElementById('fluid-menu').classList.remove('expanded'); }; });
+    document.addEventListener('click', function(){ document.getElementById('fluid-menu').classList.remove('expanded'); });
     document.getElementById('chart-point').onchange = function(){
       Charts.switchHistory(parseInt(this.value), document.getElementById('chart-field').value);
     };
@@ -325,7 +353,7 @@ const App = (() => {
     document.querySelectorAll('.nav-item').forEach(function(item){
       item.onclick = function(e){ e.preventDefault(); document.getElementById(this.dataset.target).scrollIntoView({behavior:'smooth'}); };
     });
-    document.getElementById("device-grid").addEventListener("change", function(e){ if(e.target.type==="checkbox"){ if(e.target.checked){ e.target.checked = false; showDeviceModal(e.target); } else { var p=parseInt(e.target.dataset.point), d=e.target.dataset.device, n=d==="water"?"灌溉":"通风"; API.deviceStates[p][d]=false; API.controlDevice(p,d,"off").then(function(r){ if(r.success){Native.vibrate("light");showToast("✅ 监测点"+p+" "+n+"已关闭");} }).catch(function(){ e.target.checked=true; API.deviceStates[p][d]=true; showToast("❌ 控制失败"); }); } } });
+    document.getElementById("device-grid").addEventListener("change", function(e){ if(e.target.type==="checkbox"){ if(e.target.checked){ e.target.checked = false; showDeviceModal(e.target); } else { var p=parseInt(e.target.dataset.point), d=e.target.dataset.device, n=d==="water"?"灌溉":"通风"; API.deviceStates[p][d]=false; delete activeDevices[p+"_"+d]; API.controlDevice(p,d,"off").then(function(r){ if(r.success){Native.vibrate("light");showToast("✅ 监测点"+p+" "+n+"已关闭");} }).catch(function(){ e.target.checked=true; API.deviceStates[p][d]=true; activeDevices[p+"_"+d]={startTime:Date.now(),dur:0,checkedTime:simNow()}; showToast("❌ 控制失败"); }); } } });
     // å¼¹æ¡äºä»¶
     var durChips = document.querySelectorAll('.duration-chip');
     durChips.forEach(function(c){ c.onclick = function(){ durChips.forEach(function(x){ x.classList.remove('active'); }); c.classList.add('active'); modalCtx.dur = parseInt(c.dataset.dur); }; });
@@ -362,7 +390,7 @@ const App = (() => {
   function ackAlert(id, btn) {
     btn.disabled = true;
     btn.textContent = '...';
-    fetch('http://'+window.location.hostname+':8080/api/alert/ack', {
+    fetch(API.BASE_URL+'/api/alert/ack', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({id: String(id)})
@@ -386,7 +414,7 @@ var Auth = (function(){
 
   function init(){
     document.body.classList.add('auth-mode');
-    document.getElementById('auth-user-count').textContent = 300 + Math.floor(Math.random()*80);
+
     var form = document.getElementById('auth-form'); var btn = document.getElementById('auth-btn'); if(form){ form.onsubmit = function(e){ e.preventDefault(); e.stopPropagation(); submit(); return false; }; } if(btn){ btn.onclick = function(e){ e.preventDefault(); submit(); return false; }; }
     document.getElementById('switch-link').onclick = function(e){ e.preventDefault(); toggle(); };
   }
@@ -416,7 +444,7 @@ var Auth = (function(){
       var cfm = document.getElementById('input-confirm').value.trim();
       if(pwd!==cfm){ err.textContent='两次密码不一致'; return; }
       btn.textContent = '注册中...'; btn.disabled = true;
-      fetch('http://'+window.location.hostname+':8080/api/auth/register', {
+      fetch(API.BASE_URL+'/api/auth/register', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body:JSON.stringify({phone:phone,password:pwd,name:'农户'+phone.slice(-4)})
       }).then(function(r){return r.json()}).then(function(d){
@@ -429,7 +457,7 @@ var Auth = (function(){
     }
 
     btn.textContent = '登录中...'; btn.disabled = true;
-    fetch('http://'+window.location.hostname+':8080/api/auth/login', {
+    fetch(API.BASE_URL+'/api/auth/login', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({phone:phone,password:pwd})
     }).then(function(r){return r.json()}).then(function(d){
